@@ -4,7 +4,7 @@ import json
 import os
 import time
 from datetime import datetime
-from aiogram import Bot, Dispatcher, types, F
+from aiogram import Bot, Dispatcher, types, 
 from aiogram.filters import Command
 from aiogram.types import ReplyKeyboardMarkup, KeyboardButton, ReplyKeyboardRemove
 
@@ -146,4 +146,5 @@ async def main():
     await dp.start_polling(bot)
 
 if __name__ == '__main__':
+
     asyncio.run(main())

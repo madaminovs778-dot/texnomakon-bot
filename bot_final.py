@@ -2,7 +2,6 @@ import asyncio
 import logging
 import json
 import os
-import time
 from datetime import datetime
 from aiogram import Bot, Dispatcher, types
 
@@ -17,8 +16,11 @@ dp = Dispatcher(bot)
 
 def load_data():
     if os.path.exists(DB_FILE):
-        with open(DB_FILE, "r", encoding="utf-8") as f:
-            return json.load(f)
+        try:
+            with open(DB_FILE, "r", encoding="utf-8") as f:
+                return json.load(f)
+        except:
+            return {}
     return {}
 
 def save_data(data):
@@ -46,6 +48,31 @@ SAVOLLAR = {
     "D5_S2": {"j": "A: Sochni elektrlanishdan saqlaydi", "next": "FINISH", "q": "🏁 Kurs yakunlandi!", "kb": [], "d": "d5"}
 }
 
+async def auto_timer(chat_id, user_id, step_at_start):
+    await asyncio.sleep(30)
+    data = load_data()
+    uid = str(user_id)
+    if uid in data and data[uid]["step"] == step_at_start:
+        user = data[uid]
+        d_key = SAVOLLAR[step_at_start]["d"]
+        user["errors"][d_key] += 1
+        user["step"] = SAVOLLAR[step_at_start]["next"]
+        
+        if "WAIT" in user["step"]:
+            user["last_done_date"] = datetime.now().strftime("%Y-%m-%d")
+            save_data(data)
+            await bot.send_message(chat_id, "⏰ Vaqtingiz tugadi! Bugungi darslar yakunlandi, keyingisi ertaga.")
+        elif user["step"] == "FINISH":
+            user["last_done_date"] = datetime.now().strftime("%Y-%m-%d")
+            save_data(data)
+            await bot.send_message(chat_id, "⏰ Vaqtingiz tugadi! Kurs yakunlandi.")
+        else:
+            save_data(data)
+            await bot.send_message(chat_id, "⏰ Vaqtingiz tugadi! Keyingi savolga o'tamiz.")
+            kb = get_kb(SAVOLLAR[user["step"]]["kb"]) if SAVOLLAR[user["step"]]["kb"] else None
+            await bot.send_message(chat_id, f"{SAVOLLAR[user['step']]['q']}", reply_markup=kb)
+            asyncio.create_task(auto_timer(chat_id, user_id, user["step"]))
+
 @dp.message_handler(commands=["start"])
 async def cmd_start(message: types.Message):
     uid = str(message.from_user.id)
@@ -53,11 +80,21 @@ async def cmd_start(message: types.Message):
     bugun = datetime.now().strftime("%Y-%m-%d")
     
     if uid not in data:
-        data[uid] = {"name": "Noma'lum", "step": "ISM_FAMILIYA", "errors": {"d1":0,"d2":0,"d3":0,"d4":0,"d5":0}, "last_done_date": ""}
+        data[uid] = {"name": "Noma'lum", "step": "ISM_FAMILIYA", "errors": {"d1":0,"d2":0,"d3":0,"d4":0,"d5":0}, "last_done_date": "", "daily_attempts": 0, "last_attempt_date": bugun}
     
     user = data[uid]
 
-    # Kunlik cheklov tekshiruvi
+    # Kunlik urinish cheklovi (2 marta)
+    if user.get("last_attempt_date") == bugun:
+        if user.get("daily_attempts", 0) >= 2:
+            await message.answer("🚫 Bugun 2 marta urinib ko'rdingiz. Ertaga urinib ko'ring!")
+            return
+        user["daily_attempts"] += 1
+    else:
+        user["daily_attempts"] = 1
+        user["last_attempt_date"] = bugun
+
+    # Darsni tugatgan bo'lsa, o'sha kuni ruxsat bermaslik
     if user["last_done_date"] == bugun:
         await message.answer("⏳ Siz bugun darslarni bajarib bo'ldingiz. Keyingi dars ertaga ochiladi!")
         return
@@ -66,21 +103,24 @@ async def cmd_start(message: types.Message):
     
     if user["step"] == "WAIT_D3":
         user["step"] = "D3_S1"
-        await message.answer("👋 Xush kelibsiz! Bugun 3-darsni boshlaymiz.")
-        await message.answer(f"❓ 3.1: 4K va Full HD farqi?", reply_markup=get_kb(["A: 4 marta ko'p piksel", "B: Ovoz balandligi"]))
+        await message.answer("👋 3-dars boshlandi!")
+        await message.answer("❓ 3.1: 4K va Full HD farqi?", reply_markup=get_kb(["A: 4 marta ko'p piksel", "B: Ovoz balandligi"]))
+        asyncio.create_task(auto_timer(message.chat.id, message.from_user.id, "D3_S1"))
     elif user["step"] == "WAIT_D4":
         user["step"] = "D4_S1"
-        await message.answer("👋 Xush kelibsiz! Bugun 4-darsni boshlaymiz.")
-        await message.answer(f"❓ 4.1: HEPA filtr nima uchun?", reply_markup=get_kb(["A: Mayda changni ushlash", "B: Shovqinni kamaytirish"]))
+        await message.answer("👋 4-dars boshlandi!")
+        await message.answer("❓ 4.1: HEPA filtr nima uchun?", reply_markup=get_kb(["A: Mayda changni ushlash", "B: Shovqinni kamaytirish"]))
+        asyncio.create_task(auto_timer(message.chat.id, message.from_user.id, "D4_S1"))
     elif user["step"] == "WAIT_D5":
         user["step"] = "D5_S1"
-        await message.answer("👋 Xush kelibsiz! Bugun 5-darsni boshlaymiz.")
-        await message.answer(f"❓ 5.1: Mikroto'lqinli pechda Invertor nima qiladi?", reply_markup=get_kb(["A: Tekis isitadi", "B: Faqat yoritadi"]))
+        await message.answer("👋 5-dars boshlandi!")
+        await message.answer("❓ 5.1: Mikroto'lqinli pechda Invertor nima qiladi?", reply_markup=get_kb(["A: Tekis isitadi", "B: Faqat yoritadi"]))
+        asyncio.create_task(auto_timer(message.chat.id, message.from_user.id, "D5_S1"))
     elif user["step"] == "FINISH":
-        await message.answer("🏁 Siz barcha darslarni tugatgansiz!")
+        await message.answer("🏁 Kursni tugatgansiz!")
     else:
         user["step"] = "ISM_FAMILIYA"
-        await message.answer("Texnomakon o'quv botiga xush kelibsiz! 😊 Ism-familiyangizni kiriting:")
+        await message.answer("Texnomakon botiga xush kelibsiz! Ism-familiyangizni kiriting:")
     
     save_data(data)
 
@@ -97,35 +137,34 @@ async def handle_message(message: types.Message):
         user["name"] = txt
         user["step"] = "D1_S1"
         save_data(data)
-        await message.answer(f"Rahmat! 1-dars boshlandi.")
+        await message.answer(f"Rahmat, {txt}! Har bir savolga 30 soniya beriladi.")
         await message.answer("❓ 1.1: Invertor motorning afzalligi nima?", reply_markup=get_kb(["A: Tezroq muzlatadi", "B: Elektrni tejaydi va shovqinsiz"]))
+        asyncio.create_task(auto_timer(message.chat.id, message.from_user.id, "D1_S1"))
         return
 
     step = user["step"]
     if step in SAVOLLAR:
         if txt == SAVOLLAR[step]["j"]:
             user["step"] = SAVOLLAR[step]["next"]
-            
             if "WAIT" in user["step"]:
                 user["last_done_date"] = bugun
                 save_data(data)
-                from aiogram.types import ReplyKeyboardRemove
-                await message.answer(f"✅ To'g'ri! {SAVOLLAR[step]['q']}\n\nKeyingi dars ertaga ochiladi.", reply_markup=ReplyKeyboardRemove())
+                await message.answer(f"✅ To'g'ri! {SAVOLLAR[step]['q']}\n\nKeyingi dars ertaga ochiladi.", reply_markup=types.ReplyKeyboardRemove())
             elif user["step"] == "FINISH":
                 user["last_done_date"] = bugun
                 save_data(data)
                 jami_xato = sum(user["errors"].values())
-                await bot.send_message(ADMIN_ID, f"🔔 NATIJA\n👤 Xodim: {user['name']}\n🏆 Kurs yakunlandi. Xatolar: {jami_xato}")
-                from aiogram.types import ReplyKeyboardRemove
-                await message.answer("🏁 Tabriklaymiz! Kursni to'liq tugatdingiz.", reply_markup=ReplyKeyboardRemove())
+                await bot.send_message(ADMIN_ID, f"🔔 NATIJA: {user['name']}\nXatolar: {jami_xato}")
+                await message.answer("🏁 Kurs yakunlandi!", reply_markup=types.ReplyKeyboardRemove())
             else:
                 save_data(data)
                 kb = get_kb(SAVOLLAR[user["step"]]["kb"]) if SAVOLLAR[user["step"]]["kb"] else None
                 await message.answer(f"✅ To'g'ri!\n\n{SAVOLLAR[user['step']]['q']}", reply_markup=kb)
+                asyncio.create_task(auto_timer(message.chat.id, message.from_user.id, user["step"]))
         else:
             user["errors"][SAVOLLAR[step]["d"]] += 1
             save_data(data)
-            await message.answer("❌ Xato! Yana urinib ko'ring:")
+            await message.answer("❌ Xato! Qayta urinib ko'ring (vaqt ketyapti):")
 
 if __name__ == '__main__':
     from aiogram import executor
